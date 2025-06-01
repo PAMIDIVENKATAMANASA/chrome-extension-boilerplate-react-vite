@@ -35,5 +35,5 @@ export const withPageConfig = (config: UserConfig) =>
         },
       },
       config,
-    ),
+    ) as UserConfig,
   );

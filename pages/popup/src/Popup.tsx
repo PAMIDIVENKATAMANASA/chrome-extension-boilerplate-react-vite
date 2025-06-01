@@ -1,63 +1,173 @@
-import '@src/Popup.css';
-import { t } from '@extension/i18n';
-import { PROJECT_URL_OBJECT, useStorage, withErrorBoundary, withSuspense } from '@extension/shared';
-import { exampleThemeStorage } from '@extension/storage';
-import { cn, ErrorDisplay, LoadingSpinner, ToggleButton } from '@extension/ui';
+'use client';
 
-const notificationOptions = {
-  type: 'basic',
-  iconUrl: chrome.runtime.getURL('icon-34.png'),
-  title: 'Injecting content script error',
-  message: 'You cannot inject script here!',
-} as const;
+import '@src/Popup.css';
+import { withErrorBoundary, withSuspense } from '@extension/shared';
+import { Download, Image, Table } from 'lucide-react';
+import { useState } from 'react';
 
 const Popup = () => {
-  const { isLight } = useStorage(exampleThemeStorage);
-  const logo = isLight ? 'popup/logo_vertical.svg' : 'popup/logo_vertical_dark.svg';
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [status, setStatus] = useState('');
 
-  const goGithubSite = () => chrome.tabs.create(PROJECT_URL_OBJECT);
+  const showError = (msg: string) => {
+    console.error(msg);
+    setStatus(msg);
+    setIsDownloading(false);
+    setTimeout(() => setStatus(''), 3000);
+  };
 
-  const injectContentScript = async () => {
-    const [tab] = await chrome.tabs.query({ currentWindow: true, active: true });
-
-    if (tab.url!.startsWith('about:') || tab.url!.startsWith('chrome:')) {
-      chrome.notifications.create('inject-error', notificationOptions);
+  const downloadImages = async () => {
+    if (!chrome?.tabs || !chrome?.scripting || !chrome?.downloads) {
+      showError('Chrome APIs not available.');
+      return;
     }
 
-    await chrome.scripting
-      .executeScript({
-        target: { tabId: tab.id! },
-        files: ['/content-runtime/example.iife.js', '/content-runtime/all.iife.js'],
-      })
-      .catch(err => {
-        // Handling errors related to other paths
-        if (err.message.includes('Cannot access a chrome:// URL')) {
-          chrome.notifications.create('inject-error', notificationOptions);
-        }
+    setIsDownloading(true);
+    setStatus('Scanning for images...');
+
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) throw new Error('No active tab found');
+
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () =>
+          Array.from(document.querySelectorAll('img'))
+            .map(img => ({
+              src: img.src,
+              alt: img.alt || 'image',
+              width: img.naturalWidth,
+              height: img.naturalHeight,
+            }))
+            .filter(img => img.src.startsWith('http') && img.width > 50 && img.height > 50),
       });
+
+      const images = results[0]?.result || [];
+      if (images.length === 0) {
+        showError('No images found on this page');
+        return;
+      }
+
+      setStatus(`Found ${images.length} images. Downloading...`);
+
+      for (let i = 0; i < images.length; i++) {
+        const image = images[i];
+        const url = new URL(image.src);
+        const filename = `image_${i + 1}_${url.pathname.split('/').pop() || 'image.jpg'}`;
+        await chrome.downloads.download({
+          url: image.src,
+          filename: `webpage_images/${filename}`,
+          saveAs: false,
+        });
+      }
+
+      setStatus(`Successfully downloaded ${images.length} images!`);
+    } catch {
+      showError('Error downloading images. Please try again.');
+    } finally {
+      setIsDownloading(false);
+      setTimeout(() => setStatus(''), 3000);
+    }
+  };
+
+  const downloadTables = async () => {
+    if (!chrome?.tabs || !chrome?.scripting || !chrome?.downloads) {
+      showError('Chrome APIs not available.');
+      return;
+    }
+
+    setIsDownloading(true);
+    setStatus('Scanning for tables...');
+
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) throw new Error('No active tab found');
+
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          const tables = Array.from(document.querySelectorAll('table'));
+          return tables
+            .map((table, index) => {
+              const rows = Array.from(table.querySelectorAll('tr'));
+              const csv = rows
+                .map(row => {
+                  const cells = Array.from(row.querySelectorAll('td, th'));
+                  return cells
+                    .map(cell => {
+                      const text = (cell.textContent || '').trim();
+                      return text.includes(',') || text.includes('"') ? `"${text.replace(/"/g, '""')}"` : text;
+                    })
+                    .join(',');
+                })
+                .join('\n');
+
+              return { index: index + 1, csv, rowCount: rows.length };
+            })
+            .filter(t => t.rowCount > 0);
+        },
+      });
+
+      const tables = results[0]?.result || [];
+      if (tables.length === 0) {
+        showError('No tables found on this page');
+        return;
+      }
+
+      setStatus(`Found ${tables.length} tables. Downloading...`);
+
+      for (const table of tables) {
+        const blob = new Blob([table.csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+
+        await chrome.downloads.download({
+          url,
+          filename: `webpage_tables/table_${table.index}.csv`,
+          saveAs: false,
+        });
+
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      setStatus(`Successfully downloaded ${tables.length} tables!`);
+    } catch {
+      showError('Error downloading tables. Please try again.');
+    } finally {
+      setIsDownloading(false);
+      setTimeout(() => setStatus(''), 3000);
+    }
   };
 
   return (
-    <div className={cn('App', isLight ? 'bg-slate-50' : 'bg-gray-800')}>
-      <header className={cn('App-header', isLight ? 'text-gray-900' : 'text-gray-100')}>
-        <button onClick={goGithubSite}>
-          <img src={chrome.runtime.getURL(logo)} className="App-logo" alt="logo" />
+    <div className="popup-container">
+      <div className="popup-header">
+        <h1 className="popup-title">
+          <Download className="popup-icon" />
+          Page Downloader
+        </h1>
+      </div>
+
+      <div className="popup-content">
+        <button className="download-button images-button" onClick={downloadImages} disabled={isDownloading}>
+          <Image className="button-icon" />
+          <span>Download All Images</span>
         </button>
-        <p>
-          Edit <code>pages/popup/src/Popup.tsx</code>
-        </p>
-        <button
-          className={cn(
-            'mt-4 rounded px-4 py-1 font-bold shadow hover:scale-105',
-            isLight ? 'bg-blue-200 text-black' : 'bg-gray-700 text-white',
-          )}
-          onClick={injectContentScript}>
-          {t('injectButton')}
+
+        <button className="download-button tables-button" onClick={downloadTables} disabled={isDownloading}>
+          <Table className="button-icon" />
+          <span>Download All Tables</span>
         </button>
-        <ToggleButton>{t('toggleTheme')}</ToggleButton>
-      </header>
+
+        {status && <div className={`status-message ${isDownloading ? 'loading' : 'success'}`}>{status}</div>}
+      </div>
     </div>
   );
 };
 
-export default withErrorBoundary(withSuspense(Popup, <LoadingSpinner />), ErrorDisplay);
+const ErrorFallback = () => (
+  <div className="error-fallback">
+    <p>Something went wrong. Please try again later.</p>
+  </div>
+);
+
+export default withErrorBoundary(withSuspense(Popup, <div>Loading...</div>), ErrorFallback);

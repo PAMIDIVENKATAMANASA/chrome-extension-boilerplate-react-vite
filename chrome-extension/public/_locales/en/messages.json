@@ -1,0 +1,8 @@
+{
+  "extensionName": {
+    "message": "My Extension"
+  },
+  "extensionDescription": {
+    "message": "This is my awesome Chrome extension."
+  }
+}

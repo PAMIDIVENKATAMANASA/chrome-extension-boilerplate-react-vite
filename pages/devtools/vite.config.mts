@@ -12,6 +12,6 @@ export default withPageConfig({
   },
   publicDir: resolve(rootDir, 'public'),
   build: {
-    outDir: resolve(rootDir, '..', '..', 'dist', 'devtools'),
+    outDir: resolve(rootDir, '..', '..', 'dist'),
   },
 });
